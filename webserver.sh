@@ -1,25 +1,47 @@
 #!/bin/bash
 
-# Update and upgrade packages
+# Update and upgrade the system
 apt update && apt upgrade -y
 
-# Install nginx
-apt install -y nginx
+# Install necessary packages
+apt install -y nginx geoipupdate
 
-# Enable nginx to listen on ports 80 and 443
-sed -i 's/listen \[::\]:80 default_server;/listen \[::\]:80;/' /etc/nginx/sites-available/default
-sed -i 's/# listen \[::\]:443 ssl http2;/listen \[::\]:443 ssl http2;/' /etc/nginx/sites-available/default
+# Configure Nginx
+cat > /etc/nginx/sites-available/default <<EOF
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
 
-# Create a self-signed certificate for HTTPS
-openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /etc/ssl/private/nginx-selfsigned.key -out /etc/ssl/certs/nginx-selfsigned.crt -subj "/C=LT/ST=Vilnius/L=Vilnius/O=MyCompany/OU=IT Department/CN=example.com"
+    ssl_certificate /etc/nginx/ssl/self-signed.crt;
+    ssl_certificate_key /etc/nginx/ssl/self-signed.key;
 
-# Configure nginx to use the self-signed certificate
-sed -i 's/# ssl_certificate/ssl_certificate/' /etc/nginx/sites-available/default
-sed -i 's/# ssl_certificate_key/ssl_certificate_key/' /etc/nginx/sites-available/default
-sed -i 's/# ssl_dhparam/ssl_dhparam/' /etc/nginx/sites-available/default
+    # Restrict access to Lithuanian IP
+    geoip2 /usr/share/GeoIP/GeoIP2-Country.mmdb {
+        $geoip2_metadata_country_build_metadata;
+        if (\$geoip2_metadata_country_name != "Lithuania") {
+            return 403;
+        }
+    }
 
-# Restrict access to the server for everyone, except people from Lithuania
-sed -i '/allow 127.0.0.1;/a \        allow  LT;' /etc/nginx/nginx.conf
+    root /var/www/html;
+    index index.html index.htm;
 
-# Restart nginx to apply the changes
+    server_name example.com;
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+}
+EOF
+
+# Generate self-signed SSL certificate
+mkdir -p /etc/nginx/ssl/
+openssl req -new -newkey rsa:2048 -days 365 -nodes -x509 -subj "/C=LT/ST=Vilnius/L=Vilnius/O=Example Corp/CN=example.com" -keyout /etc/nginx/ssl/self-signed.key -out /etc/nginx/ssl/self-signed.crt
+
+# Update GeoIP2 database
+geoipupdate -v
+
+# Restart Nginx to apply changes
 systemctl restart nginx
