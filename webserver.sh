@@ -1,47 +1,51 @@
 #!/bin/bash
 
-# Update and upgrade the system
-apt update && apt upgrade -y
+# Update and secure Debian GNU/Linux 11
+apt update
+apt upgrade -y
+apt install unattended-upgrades ufw fail2ban -y
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow ssh
+ufw allow http
+ufw allow https
+ufw enable
 
-# Install necessary packages
-apt install -y nginx geoipupdate
+# Install Nginx
+apt install nginx -y
 
-# Configure Nginx
-cat > /etc/nginx/sites-available/default <<EOF
-server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
-    listen 443 ssl default_server;
-    listen [::]:443 ssl default_server;
+# Create self-signed certificate
+openssl req -new -newkey rsa:2048 -days 365 -nodes -x509 -keyout /etc/nginx/certs/selfsigned.key -out /etc/nginx/certs/selfsigned.crt -subj "/C=LT/ST=Vilnius/L=Vilnius/O=My Org/OU=My Unit/CN=mydomain.com"
 
-    ssl_certificate /etc/nginx/ssl/self-signed.crt;
-    ssl_certificate_key /etc/nginx/ssl/self-signed.key;
+# Configure Nginx to only allow access from LT
+echo "geoip_country /usr/share/GeoIP/GeoIP.dat; \
+map \$geoip_country_code \$allowed_country { \
+    default no; \
+    LT yes; \
+} \
+server { \
+    listen 80 default_server; \
+    listen [::]:80 default_server; \
+    server_name _; \
+    return 301 https://\$host\$request_uri; \
+} \
+server { \
+    listen 443 ssl http2 default_server; \
+    listen [::]:443 ssl http2 default_server; \
+    server_name _; \
+    ssl_certificate /etc/nginx/certs/selfsigned.crt; \
+    ssl_certificate_key /etc/nginx/certs/selfsigned.key; \
+    location / { \
+        if (\$allowed_country = no) { \
+            return 403; \
+        } \
+        proxy_pass http://localhost:5000; \
+        proxy_set_header Host \$host; \
+        proxy_set_header X-Real-IP \$remote_addr; \
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for; \
+        proxy_set_header X-Forwarded-Proto \$scheme; \
+    } \
+}" > /etc/nginx/sites-available/default
 
-    # Restrict access to Lithuanian IP
-    geoip2 /usr/share/GeoIP/GeoIP2-Country.mmdb {
-        $geoip2_metadata_country_build_metadata;
-        if (\$geoip2_metadata_country_name != "Lithuania") {
-            return 403;
-        }
-    }
-
-    root /var/www/html;
-    index index.html index.htm;
-
-    server_name example.com;
-
-    location / {
-        try_files \$uri \$uri/ =404;
-    }
-}
-EOF
-
-# Generate self-signed SSL certificate
-mkdir -p /etc/nginx/ssl/
-openssl req -new -newkey rsa:2048 -days 365 -nodes -x509 -subj "/C=LT/ST=Vilnius/L=Vilnius/O=Example Corp/CN=example.com" -keyout /etc/nginx/ssl/self-signed.key -out /etc/nginx/ssl/self-signed.crt
-
-# Update GeoIP2 database
-geoipupdate -v
-
-# Restart Nginx to apply changes
-systemctl restart nginx
+# Reload Nginx
+systemctl reload nginx
