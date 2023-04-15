@@ -1,0 +1,22 @@
+# Use the official php-fpm image as the base image
+FROM php:latest-fpm
+
+# Install the php extensions required by the application
+RUN docker-php-ext-install mysqli pdo pdo_mysql
+
+# Install openssl and generate self-signed SSL certificate
+RUN apt-get update && \
+    apt-get install -y openssl && \
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout /etc/nginx/ssl/nginx-selfsigned.key \
+    -out /etc/nginx/ssl/nginx-selfsigned.crt \
+    -subj "C=LT/ST=Kaunas/L=Kaunas/O=Organization/OU=IT Department/CN=localhost"
+
+# Copy the application code to the container
+COPY index.php /var/www/html/index.php
+
+# Expose port 9000 for php-fpm
+EXPOSE 9000
+
+# Start the php-fpm server
+CMD ["php-fpm"]
